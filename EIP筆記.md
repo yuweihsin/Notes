@@ -1,56 +1,127 @@
-# EIP筆記
 
-## 711606：
+# 燒錄rom.ima檔步驟
 
-- LNV：動態更改調試控制台用戶名似乎很難，但是我們可以在工廠更改用戶名並在發貨後修復嗎？如果不是，我們可以在 BMC 固件版本中更改用戶名嗎？
-**[AMI]**  “sysadmin”為BMC Linux 用戶，配置為root 訪問權限，默認為Linux 系統中唯一的管理員角色。我們不建議在運行時更改此用戶名，但我們可以在固件構建時配置此用戶名。
+## 架設tftp (Ubuntu)
+1. 下載 tftpd-hpa
+```
+sudo apt-get install tftpd-hpa
+```
+2. 設定分享的目錄, 以下是 /home/yuweihsin/tftp
+```
+sudo mkdir -p /home/yuweihsin/tftp
+sudo chmod -R 777 /home/yuweihsin/tftp
+```
+3. 配置 /etc/default/tftpd-hpa
+```
+vim /etc/default/tftpd-hpa
+```
+```
+# /etc/default/tftpd-hpa
+TFTP_USERNAME="tftp"
+TFTP_DIRECTORY="/home/yuweihsin/tftp"
+TFTP_ADDRESS=":69"
+TFTP_OPTIONS="-l -c -s"
 
-- LNV：OEM更改的密碼是否持久？這意味著即使用戶恢復出廠設置，密碼仍然有效。
-**[AMI]** BMC Linux用戶“sysadmin”的新密碼，保存在“/conf/passwd”和“/conf/shadow”文件中，如果客戶想在出廠後保留密碼，我們需要將相關文件添加到保留文件列表。
+#-c: Allow new files to be created
+#-s: Change  root  directory  on startup.
+#-l:  Run the server in standalone (listen) mode, rather than run from inetd.
+```
+4. 重啟 tftpd-hpa
+```
+sudo service tftpd-hpa restart
+```
 
-## 710259：
-*Auto-recovery function sup SD and TFTP*
-1. 如果SPI_MAIN損壞，SPI_MAIN可以從SPI_BAK恢復嗎？
-**[AMI]**：如果你有雙圖像支持，一旦 SPI_MAIN 被破壞，SPI_BAK 就會運行。您可以使用 webui 、 yafuflash 從 SPI_BAK 升級 SPI_MAIN 固件。
-2. BMC設置是否可以備份到SPI_BAK並從SPI_BAK恢復？（如果 SPI_BAK 大小足夠大）
-**[AMI]**：一旦您啟用雙映像支持，我們在 PRJ 中有“同步兩個配置功能”選項。此功能將在 2 個圖像之間同步兩種配置。
-3. 如果更新了SPI_MAIN，SPI_BAK會自動同步到SPI_MAIN嗎？
-**[AMI]**：我們有升級 webui 的“雙圖像”選項，yafuflash 升級。
-4. 如果開啟雙鏡像，讀卡器中沒有TF卡，是否還有本地鏡像需要重定向？
-**[AMI]**：雙圖像和自動恢復功能不能共存，因為它們都由 WDT2 觸發。
+
+## 進uboot
+如果沒有設定MAC address, 會拿不到IP，下print可以查MAC address
+有ethaddr跟eth1addr, 這兩個就是MAC address的參數
+```
+print
+```
+設定MAC address
+```
+setenv ethaddr 00:ab:cd:dd:ee:01
+setenv eth1addr 00:ab:cd:dd:ee:02
+```
+```
+saveenv
+```
+```
+reset
+```
+
 ---
-1. WDT2 定時器，在加載內核後 UBoot 時將默認啟用定時器計數器為 5 分鐘，並期望在 BMC 啟動完成時禁用定時器計數器。這意味著我們使用 WDT2 來識別 BMC 啟動結果。
-**[Roy]**：是的，沒錯。但是如果您在 PRJ 中啟用“定期刷新硬件看門狗”，則看門狗定時器在啟動完成後仍會繼續倒計時。在這種情況下，進程管理器將每 20 秒刷新一次看門狗定時器。
-2. 如果 BMC 啟動失敗且支持雙映像功能，將重置為 UBoot 階段，然後從輔助 SPI 閃存啟動。即使用 UBoot_ENV 中的 boot SPI source 變量來切換 boot SPI。
-**[Roy]**：更具體地說，軟件故障安全功能使用 UBoot_ENV 中的引導 SPI 源變量來切換引導 SPI，而硬件故障安全功能使用硬件機制來切換引導源。
-3. 如果 BMC 啟動失敗且 Auto-recovery 功能開啟，Uboot 會在 UBoot_ENV 中記錄失敗計數，默認最大為 3，UBoot 會嘗試從 TFTP/SD 恢復 BMC SPI flash，這取決於源設置在 UBoot_ENV 中。
-**[Roy]**：是的，沒錯。
+## 載入rom.ima並燒錄至開發板
 
----
-1. SPI_MAIN存有BMC FW，SPI_BAK也存有BMC FW，存的是SPI_MAIN的bakcup image
-**[AMI]**：SPI_BAK會作為存儲的方向去評估。
-2. 正常情況下，BMC從SPI_MAIN讀取代碼和數據。
-**[AMI]**: ok
-3. SPI_MAIN裡的FW如果從SPI_MAIN的故障機制不成功或崩潰，將SPI_BAK MC FW恢復到SPI_MAIN，然後啟動
-**[AMI]** 可以否接受當前AMI已有的自動恢復，那是觸發的wdt2 timeout就啟動recover 機制，情況可能包BMC hang，kernel panic...等。
-4. 如果更新了SPI_MAIN的BMC FW，則也更新SPI_BAK的BMC FW
-**[AMI]**：需要評估更新方法嗎？例如：webui、yafu 或 redfish 升級？
-5. 要求執行備份鏡像（非SPI_MAIN crash或BMC.用戶不成功），則將MAIN的FW備份到SPI_BAK
-**[AMI]**: 需要評估哪些備份方法？例如： webui 、 yafu 或 redfish 備份方法？
-以webui為例，需要是否是新增一個備份圖片頁面。當用戶點擊備份圖片按鈕時，就會讀取當前SPI_MAIN的數據存儲到SPI_BAK的存儲。
+1. 進入uboot
+2. 設定tftp server IP
+``` 
+setenv serverip 172.31.100.227
+```
+3. help 開發板取得IP
+```
+dhcp
+```
+4. 打開PRJ檔案檢查 
+`CONFIG_SPX_FEATURE_GLOBAL_^AST2500EVB^_FLASH_START` 的數值是不是 `0x20000000`?
+**(kernal3-->`0x20000000`，kernal5-->`0x0`)**
+5. 從tftp下載`rom.ima`
+`0x83000000`是uboot起來的時候所做的一個mapping, 
+這個位置是mapping到AST2500EVB上的DRAM,
+這一步驟是把`rom.ima`下載到記憶體的`0x83000000`的位址
+```
+tftpboot 0x83000000 rom.ima
+```
+6. Unlock SPI flash
 
----
-## 714938
-* Question : 使用**eth0** IPV4登錄BMC Web
-1. 使用bond0 IPV4登錄BMC Web；
-2. 不要勾選網絡設置->網絡綁定配置中的啟用綁定框；
-3. 再次使用eth0 IPV4登錄BMC Web；
-4. **Dashboard上無法顯示IPV4和IPV6**
+### 查Kernal版本
+```
+cat /proc/ractrends/Helper/FwInfo
+```
+### *Kernal3*：
+```
+protect off all
+```
+```
+erase all
+```
+現在要把剛剛下載到`0x83000000`的`rom.ima`拷貝至SPI flash, 而SPI flash位址是在`0x20000000`
+先確認`rom.ima`的大小是否為`32MB`
+```
+cp.b 0x83000000 0x20000000 0x2000000
+```
 
-* 發生原因是由於api/settings/network資料回傳的內容，在web按F12可查看網路回應的message (JSON格式)，在解除Bonding後，network產生eth0及eth1兩組資料，後一組為空因此資料被覆蓋過去，若刪除一組資料，可以正常輸出，不過Network IP Settin頁面會僅剩一組eth0。
+### *Kernal 5*
+懶人包：
+```
+setenv serverip 172.31.100.61 && dhcp && tftpboot 0x83000000 rom.ima  && sf probe 0 && sf update 0x83000000 0 0x4000000
+```
+sf是SPI flash的縮寫，probe是指初始化指定的SPI上的設備
+指定連接 `0 flash` (BMC)
+```
+sf probe 0
+```
+DRAM裡面有很多section，`update`功能包含` write`, `erase`, `protect of all`(unclock用)
+```
+sf update 0x83000000 0 0x4000000
+```
+最後 `reset` 進入 `uboot` 並重新設定 `MAC address`
 
-* 測試方式：
-在BMC路徑 /var/下產生test.log 就只輸出一組eth資料，
-進入檔案spx_restservice-13.30.38.9.0-src\data\settings_network.c
-修改函數START_AUTHORIZED_COLLECTION (getNetwork, GET, "/settings/network", 1, matches, true)--> 讓他抓到就離開while迴圈，針對指定函數break
-如此一來#deshboard就能正常輸出，但Network IP Setting 頁面會僅剩一組eth0，建議換成跟隨資料組數呈現的網頁方式(有eth0、eth1可選擇的方式)。
+
+***Note：***
+MAC address：MAC位址，直譯為媒體存取控制位址，也稱為區域網路位址，乙太網路位址或實體位址，它是一個用來確認網路裝置位置的位址。在OSI模型中，第三層網路層負責IP位址，第二層資料鏈結層則負責MAC位址。MAC位址用於在網路中唯一標示一個網卡，一台裝置若有一或多個網卡，則每個網卡都需要並會有一個唯一的MAC位址。
+(作業系統看的是IP跟Port Number，網路卡是看MAC address)
+
+sf probe [[bus:]cs] [hz] [mode] - init flash device on given SPI bus and chip select
+
+sf read addr offset len              - read \`len' bytes starting at\`offset' to memory at \`addr'
+
+sf write addr offset len             - write \`len' bytes from memor at \`addr' to flash at \`offset'
+
+sf erase offset [+]len                - erase \`len' bytes from \`offset' \`len' round up \`len' to block size
+
+sf update addr offset len         - erase and write \`len' bytes from memory at \`addr' to flash at \`offset'
+
+
+ipmitool -I lanplus -H 127.0.0.1 -U admin -P admin123 raw 0x0 0xb 0xf 
+
